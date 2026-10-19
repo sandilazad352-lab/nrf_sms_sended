@@ -1,0 +1,13 @@
+# PlatformIO build output and package/cache data
+.pio/
+.pio-core/
+**/.pio/
+**/.pio-core/
+
+# Common editor and OS files
+.vscode/.browse.c
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch/
+.DS_Store
+Thumbs.db
