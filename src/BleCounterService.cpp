@@ -19,6 +19,9 @@ BLECharacteristic eventCharacteristic(EVENT_UUID, CHR_PROPS_NOTIFY, sizeof(Event
 BLECharacteristic settingsCharacteristic(SETTINGS_UUID, CHR_PROPS_READ | CHR_PROPS_WRITE, 2, true);
 BLECharacteristic syncCharacteristic(SYNC_UUID, CHR_PROPS_READ | CHR_PROPS_WRITE, 4, true);
 BLECharacteristic resetCharacteristic(RESET_UUID, CHR_PROPS_WRITE, 4, true);
+BLECharacteristic timeSyncCharacteristic(TIME_SYNC_UUID, CHR_PROPS_WRITE, 4, true);
+BLECharacteristic lastCountTimeCharacteristic(LAST_COUNT_TIME_UUID,
+                                              CHR_PROPS_READ | CHR_PROPS_NOTIFY, 4, true);
 } // namespace
 
 BleCounterService* BleCounterService::instance_ = nullptr;
@@ -28,7 +31,7 @@ void BleCounterService::begin(CounterState& state) {
   instance_ = this;
 
   Bluefruit.begin(1, 0);
-  Bluefruit.setName("Book Counter");
+  Bluefruit.setName("Post Box");
   Bluefruit.setTxPower(-8);
   Bluefruit.autoConnLed(false);
   Bluefruit.Security.setIOCaps(false, false, false);
@@ -63,6 +66,14 @@ void BleCounterService::begin(CounterState& state) {
   resetCharacteristic.setPermission(SECMODE_ENC_NO_MITM, SECMODE_ENC_NO_MITM);
   resetCharacteristic.setWriteCallback(onResetWrite);
   resetCharacteristic.begin();
+
+  timeSyncCharacteristic.setPermission(SECMODE_ENC_NO_MITM, SECMODE_ENC_NO_MITM);
+  timeSyncCharacteristic.setWriteCallback(onTimeSyncWrite);
+  timeSyncCharacteristic.begin();
+
+  lastCountTimeCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  lastCountTimeCharacteristic.begin();
+  lastCountTimeCharacteristic.write(&lastCountUtcSeconds_, sizeof(lastCountUtcSeconds_));
 
   refreshAdvertising();
 }
@@ -99,8 +110,17 @@ void BleCounterService::sendEvent(uint8_t code) {
   }
 }
 
-void BleCounterService::onCountChanged() {
-  ++eventSequence_;
+void BleCounterService::onCountChanged(uint16_t countDelta, uint32_t nowMs) {
+  if (clockSynchronized_) {
+    lastCountUtcSeconds_ = syncedUtcSeconds_ + (nowMs - syncAnchorMs_) / 1000UL;
+  } else {
+    lastCountUtcSeconds_ = 0; // Zero means the device clock has not been synced since boot.
+  }
+  lastCountTimeCharacteristic.write(&lastCountUtcSeconds_, sizeof(lastCountUtcSeconds_));
+  if (Bluefruit.connected() && lastCountTimeCharacteristic.notifyEnabled()) {
+    lastCountTimeCharacteristic.notify(&lastCountUtcSeconds_, sizeof(lastCountUtcSeconds_));
+  }
+  eventSequence_ = static_cast<uint16_t>(eventSequence_ + countDelta);
   advertisingEventActive_ = true;
   countCharacteristic.write(&state_->count, sizeof(state_->count));
   if (Bluefruit.connected() && countCharacteristic.notifyEnabled()) {
@@ -110,6 +130,20 @@ void BleCounterService::onCountChanged() {
 
   if (Bluefruit.connected()) advertisingNeedsRefresh_ = true;
   else refreshAdvertising();
+}
+
+void BleCounterService::onTimeSyncWrite(uint16_t, BLECharacteristic*, uint8_t* data,
+                                        uint16_t length) {
+  if (!instance_ || length != sizeof(uint32_t)) return;
+  uint32_t utcSeconds = 0;
+  memcpy(&utcSeconds, data, sizeof(utcSeconds));
+  // Unix time zero is the protocol's unknown/invalid sentinel.
+  if (utcSeconds == 0) return;
+  instance_->syncedUtcSeconds_ = utcSeconds;
+  instance_->syncAnchorMs_ = millis();
+  instance_->clockSynchronized_ = true;
+  Serial.print(F("UTC clock synchronized: "));
+  Serial.println(utcSeconds);
 }
 
 void BleCounterService::updateBattery(uint8_t percent, uint32_t now) {
@@ -179,15 +213,15 @@ void BleCounterService::onResetWrite(uint16_t, BLECharacteristic*, uint8_t* data
   instance_->state_->count = 0;
   instance_->state_->acknowledgedCount = 0;
   instance_->persistencePending_ = true;
-  instance_->countCharacteristic.write(&instance_->state_->count,
-                                       sizeof(instance_->state_->count));
-  instance_->syncCharacteristic.write(&instance_->state_->acknowledgedCount,
-                                      sizeof(instance_->state_->acknowledgedCount));
+  countCharacteristic.write(&instance_->state_->count,
+                            sizeof(instance_->state_->count));
+  syncCharacteristic.write(&instance_->state_->acknowledgedCount,
+                           sizeof(instance_->state_->acknowledgedCount));
   ++instance_->eventSequence_;
   instance_->advertisingEventActive_ = false;
-  if (Bluefruit.connected() && instance_->countCharacteristic.notifyEnabled()) {
-    instance_->countCharacteristic.notify(&instance_->state_->count,
-                                          sizeof(instance_->state_->count));
+  if (Bluefruit.connected() && countCharacteristic.notifyEnabled()) {
+    countCharacteristic.notify(&instance_->state_->count,
+                               sizeof(instance_->state_->count));
   }
   instance_->sendEvent(5);
   instance_->advertisingNeedsRefresh_ = true;

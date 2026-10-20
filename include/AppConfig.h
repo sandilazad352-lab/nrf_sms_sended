@@ -7,8 +7,10 @@ constexpr uint8_t IR_SENSOR_PIN = PIN_022; // Arduino pin 20, nRF P0.20
 constexpr uint8_t STATUS_LED_PIN = PIN_015; // onboard red LED, active low
 constexpr uint32_t SERIAL_BAUD_RATE = 115200;
 
-constexpr uint32_t IR_DEBOUNCE_MS = 35;
-constexpr uint32_t IR_REARM_MS = 250;
+// High-speed falling-edge input. The larger value is the minimum accepted
+// interval; increase it if the sensor output is noisy or chatters.
+constexpr uint32_t IR_DEBOUNCE_MS = 1;
+constexpr uint32_t IR_REARM_MS = 5;
 constexpr uint32_t BATTERY_SAMPLE_PERIOD_MS = 60000;
 constexpr uint32_t PROXIMITY_SAMPLE_PERIOD_MS = 1500;
 constexpr uint32_t LOW_BATTERY_REPEAT_MS = 15UL * 60UL * 1000UL;
@@ -24,5 +26,7 @@ constexpr uint16_t EVENT_UUID = 0xFFF3;
 constexpr uint16_t SETTINGS_UUID = 0xFFF4;
 constexpr uint16_t SYNC_UUID = 0xFFF5;
 constexpr uint16_t RESET_UUID = 0xFFF6;
+constexpr uint16_t TIME_SYNC_UUID = 0xFFF7;
+constexpr uint16_t LAST_COUNT_TIME_UUID = 0xFFF8;
 
 constexpr uint8_t SETTINGS_NOTIFY_PROXIMITY = 0x01;

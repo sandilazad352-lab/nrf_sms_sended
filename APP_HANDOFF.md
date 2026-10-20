@@ -1,4 +1,4 @@
-# IR Book Counter companion app handoff
+# Post Box companion app handoff
 
 ## Purpose
 
@@ -8,7 +8,7 @@ The firmware is split across `src/` and `include/`. The IR input defaults to Ard
 
 ## App responsibilities
 
-- Discover the device advertising as **Book Counter** and connect to its BLE GATT service.
+- Discover the device advertising as **Post Box** and connect to its BLE GATT service.
 - Pair/bond with the device when the OS requests it. The settings and sync characteristics require an encrypted BLE link.
 - Read and display the current count and battery estimate.
 - Subscribe to count, battery, and event notifications.
@@ -16,6 +16,9 @@ The firmware is split across `src/` and `include/`. The IR input defaults to Ard
 - Keep a local copy of the last successfully synced device count. If a backend is later added, upload the cumulative reading idempotently and only acknowledge it after the upload succeeds.
 - Show local phone notifications when subscribed events arrive. The firmware cannot create Android or iOS notifications itself.
 - Provide a clear connection, sync, and battery status, including when the device is out of range or the app is not allowed to scan in the background.
+- Before a hardware reset, persist the enrolled device ID, timestamp, last observed device count, and a unique reset epoch/boundary. Keep it as history and show the previous count after reset.
+- On every connection, write the phone's current UTC Unix time to `FFF7`, subscribe to `FFF8`, and store each received count/time pair when event history is required.
+- Show device count and lifetime total with explicit epoch semantics. If offering undo after a hardware reset, label it as an app-side correction; firmware cannot write an arbitrary count back to the device.
 
 ## MVP screens
 
@@ -29,7 +32,7 @@ Avoid claiming a precise distance in meters from RSSI. RSSI varies with the phon
 
 ## BLE service and characteristics
 
-The custom 16-bit service UUID is `FFF0`. Scan for the service UUID and/or local name `Book Counter`; do not depend only on the name because operating systems may shorten scan-response names.
+The custom 16-bit service UUID is `FFF0`. Scan for the service UUID and/or local name `Post Box`; do not depend only on the name because operating systems may shorten scan-response names.
 
 | Characteristic | UUID | Properties and access | Wire format |
 | --- | --- | --- | --- |
@@ -39,6 +42,8 @@ The custom 16-bit service UUID is `FFF0`. Scan for the service UUID and/or local
 | Settings | `FFF4` | Read, write; encrypted link required | 2 bytes: `nearRssiDbm:i8`, `flags:u8` |
 | Sync acknowledgement | `FFF5` | Read, write; encrypted link required | 4-byte unsigned acknowledged count, little-endian |
 | Reset count | `FFF6` | Write; encrypted link required | Exact four ASCII bytes `RST1` (`52 53 54 31` hex); resets device count and sync acknowledgement to zero |
+| Set device time | `FFF7` | Write; encrypted link required | 4-byte unsigned Unix UTC seconds, little-endian; zero is invalid |
+| Last count time | `FFF8` | Read, notify | 4-byte unsigned Unix UTC seconds, little-endian; zero means unknown |
 
 Event codes:
 
@@ -49,6 +54,8 @@ Event codes:
 | `3` | Connected phone left the configured RSSI boundary. A disconnect is reported by BLE connection state, not by this event packet. |
 | `4` | Battery estimate at or below the firmware low-battery threshold |
 | `5` | Counter reset completed; count is zero |
+
+After connecting and establishing encryption, the app should write the phone's current Unix UTC seconds to `FFF7` and subscribe/read `FFF8`. `FFF8` reports the timestamp of the most recent count batch; zero means the device has not been synced since boot. The firmware estimates time between syncs using its running low-power clock, so a continuous phone connection is not needed; clock drift can accumulate between syncs. Time becomes unknown again after a reboot or power loss until the next phone sync. The existing 8-byte `FFF3` event packet is unchanged. `FFF8` is not a durable event log: the app should persist received count/timestamp pairs if it needs history.
 
 Settings byte details:
 
@@ -69,7 +76,9 @@ The device maintains a cumulative total and does not clear it after a sync. The 
 5. Read `FFF5` back to confirm the acknowledgement.
 6. Retry safely after disconnects or failures. A failed sync must not clear or decrement the device count.
 
-The sync acknowledgement means “the app/backend has handled counts up to this total”; it does not modify the counter. To reset the count, require an in-app confirmation, connect and pair with the device, then write the exact bytes `52 53 54 31` to `FFF6`. A successful command sets both the count and acknowledged count to zero, persists that state, and notifies subscribed clients with event code 5. Read `FFF1` and `FFF5` afterward to confirm. Do not optimistically clear app or server history; reset only the device's cumulative counter. Reset does not erase saved proximity settings or BLE bonds. If the write result is uncertain, read the count before retrying.
+The sync acknowledgement means “the app/backend has handled counts up to this total”; it does not modify the counter. Before resetting, save the final observed `FFF1` count and a timestamp/epoch boundary in app or backend history; event code 5 reports zero and does not carry the previous count. Then require in-app confirmation, connect and pair with the device, and write the exact bytes `52 53 54 31` to `FFF6`. A successful command sets both the count and acknowledged count to zero, persists that state, and notifies subscribed clients with event code 5. Read `FFF1` and `FFF5` afterward to confirm. Do not optimistically clear app or server history; reset only the device's cumulative counter. Reset does not erase saved proximity settings or BLE bonds. If the write result is uncertain, read the count before retrying.
+
+For lifetime total, sum the final counts of completed hardware epochs and the current epoch's `FFF1` count. Keep software-only cycle boundaries separate from hardware reset epochs so snapshots are not counted twice. A restore/undo feature can correct app-side presentation/history only; it cannot restore the count on this firmware or a replacement board.
 
 The current firmware has no command to import a server total or restore a count to a replacement board. Full multi-device restore/merge therefore needs a separate authenticated import command. The current firmware also exposes a total, not a durable event-by-event history; the app should not promise historical per-person passage records.
 
@@ -104,6 +113,7 @@ Keep separate records for:
 
 - **User preferences:** RSSI boundary, proximity enabled, count notifications enabled, display units, quiet hours.
 - **Device state:** locally assigned nickname, last known cumulative count, last acknowledged count, last sync time, firmware protocol version, bond/connection status.
+- **Reset boundary:** enrolled app device ID, unique epoch/boundary ID, timestamp, final observed `FFF1` count, and whether the boundary came from a hardware reset or an app-only cycle reset.
 - **Backend sync record (optional):** device identity, cumulative count, received timestamp, upload idempotency key.
 
 Do not use the BLE MAC address as a permanent account identity. Use an app/backend-issued device enrollment ID or a user-confirmed device record; BLE addresses can be randomized.
@@ -122,8 +132,9 @@ Do not use the BLE MAC address as a permanent account identity. Use an app/backe
 
 ## Acceptance checklist
 
-- App discovers and connects to the Book Counter on supported Android/iOS versions selected for release.
+- App discovers and connects to the Post Box on supported Android/iOS versions selected for release.
 - Pairing/encrypted writes work with `FFF4` and `FFF5`.
+- The app syncs UTC time over `FFF7` after connecting, and stores count timestamps from `FFF8`; zero is treated as unknown.
 - Current count and battery display correctly, including `0xFF` battery-unavailable handling.
 - A beam-break count updates the UI through notifications and is recovered by a fresh read after reconnect.
 - Settings survive app restart and are applied to the device on each connection.

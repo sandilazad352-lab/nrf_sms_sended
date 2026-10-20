@@ -1,10 +1,10 @@
 # বুক কাউন্টার মোবাইল অ্যাপ: ডেভেলপার গাইড
 
-এই নথিটি Book Counter NRF52 ফার্মওয়্যারের জন্য Android/iOS অ্যাপ তৈরির নির্দেশিকা। এই রিপোজিটরিতে শুধু ডিভাইসের ফার্মওয়্যার আছে; মোবাইল অ্যাপ, ব্যাকএন্ড, অ্যাকাউন্ট ব্যবস্থা বা push-notification server নেই।
+এই নথিটি Post Box NRF52 ফার্মওয়্যারের জন্য Android/iOS অ্যাপ তৈরির নির্দেশিকা। এই রিপোজিটরিতে শুধু ডিভাইসের ফার্মওয়্যার আছে; মোবাইল অ্যাপ, ব্যাকএন্ড, অ্যাকাউন্ট ব্যবস্থা বা push-notification server নেই।
 
 ## অ্যাপের উদ্দেশ্য
 
-Bluetooth Low Energy (BLE) দিয়ে Book Counter খুঁজে সংযোগ করা, IR সেন্সরের মোট গণনা ও ব্যাটারি দেখানো, proximity alert সেট করা, গণনার sync অবস্থা সামলানো এবং অনুমোদিত ব্যবহারকারীকে ডিভাইসের গণনা reset করতে দেওয়া।
+Bluetooth Low Energy (BLE) দিয়ে Post Box খুঁজে সংযোগ করা, IR সেন্সরের মোট গণনা ও ব্যাটারি দেখানো, proximity alert সেট করা, গণনার sync অবস্থা সামলানো এবং অনুমোদিত ব্যবহারকারীকে ডিভাইসের গণনা reset করতে দেওয়া।
 
 ডিভাইসের count হলো ক্রমবর্ধমান মোট সংখ্যা। Reset করলে ডিভাইসের count শূন্য হবে; অ্যাপের local history বা backend-এর রেকর্ড মুছে যাবে না।
 
@@ -22,7 +22,7 @@ Bluetooth Low Energy (BLE) দিয়ে Book Counter খুঁজে সং�
 
 ## অ্যাপের প্রধান স্ক্রিন
 
-1. **সেটআপ ও ডিভাইস তালিকা:** Bluetooth permission কেন দরকার বুঝিয়ে বলুন, কাছের Book Counter খুঁজুন, connection state দেখান এবং ডিভাইস বেছে pairing করতে দিন।
+1. **সেটআপ ও ডিভাইস তালিকা:** Bluetooth permission কেন দরকার বুঝিয়ে বলুন, কাছের Post Box খুঁজুন, connection state দেখান এবং ডিভাইস বেছে pairing করতে দিন।
 2. **কাউন্টার:** বর্তমান মোট সংখ্যা, battery percent বা “পাওয়া যায়নি”, সর্বশেষ update সময়, connection ও sync অবস্থা দেখান। Notification এলে UI update করুন; reconnect বা অ্যাপ foreground-এ এলে read করে মিলিয়ে নিন।
 3. **Alert:** ব্যবহারকারীকে near/far RSSI threshold এবং proximity alert চালু/বন্ধ করতে দিন। RSSI দূরত্বের নির্ভুল মাপ নয়—এটি radio signal-এর আনুমানিক মান—এ কথা জানান।
 4. **Sync ও ইতিহাস:** সর্বশেষ সফলভাবে সংরক্ষিত/sync করা count ও সময় এবং retry বোতাম দেখান। ইতিহাসকে অ্যাপ/backend-এর রেকর্ড হিসেবে চিহ্নিত করুন; ফার্মওয়্যার প্রতিটি passage-এর আলাদা log দেয় না।
@@ -32,7 +32,7 @@ Reset-এর আগে নির্বাচিত ডিভাইসের ন�
 
 ## BLE প্রোটোকল
 
-বিজ্ঞাপনে ডিভাইসের নাম: `Book Counter`  
+বিজ্ঞাপনে ডিভাইসের নাম: `Post Box`  
 প্রধান service UUID: `FFF0`
 
 Scan করার সময় service UUID এবং/অথবা নাম ব্যবহার করুন। OS নাম ছোট করে দেখাতে পারে, তাই সম্ভব হলে service UUID-কে অগ্রাধিকার দিন। নিচের সব multi-byte integer little-endian। Connect করার পর service ও characteristic খুঁজুন, প্রয়োজনীয় notification চালু করুন এবং encrypted write-এর আগে OS-কে BLE link encrypt/pair করতে দিন।

@@ -1,10 +1,10 @@
-# Book Counter Mobile App Developer Guide
+# Post Box Mobile App Developer Guide
 
-This document is the implementation brief for the Android/iOS companion app for the Book Counter NRF52 firmware. The repository contains firmware only; it does not include a mobile app, backend, account system, or push-notification server.
+This document is the implementation brief for the Android/iOS companion app for the Post Box NRF52 firmware. The repository contains firmware only; it does not include a mobile app, backend, account system, or push-notification server.
 
 ## Product goal
 
-Build a clear, reliable app that can find and connect to a Book Counter over Bluetooth Low Energy (BLE), display its cumulative IR passage count and battery estimate, configure proximity alerts, synchronize count state, and let an authorized user reset the device count.
+Build a clear, reliable app that can find and connect to a Post Box over Bluetooth Low Energy (BLE), display its cumulative IR passage count and battery estimate, configure proximity alerts, synchronize count state, and let an authorized user reset the device count.
 
 Treat the device count as a cumulative total. A reset sets the device's total to zero; it does not delete the app's locally stored history or any backend records.
 
@@ -24,7 +24,7 @@ Choose the framework and minimum Android/iOS versions with the product team. Kee
 
 ## Main screens
 
-1. **Setup and device list**: Explain Bluetooth permissions, scan for nearby Book Counter devices, show connection state, and allow the user to select and pair a device.
+1. **Setup and device list**: Explain Bluetooth permissions, scan for nearby Post Box devices, show connection state, and allow the user to select and pair a device.
 2. **Counter**: Show the current total, battery percent or “Unavailable,” last update time, connection state, and sync state. Update from notifications and reconcile with a read after reconnect or app resume.
 3. **Alerts**: Let the user choose a near/far RSSI threshold and turn proximity alerts on or off. Explain that RSSI is a radio signal estimate, not a reliable distance in meters.
 4. **Sync and history**: Show last successfully saved/synced total and time, with retry. Label history as app/backend records; firmware provides a cumulative total rather than a passage-by-passage log.
@@ -34,7 +34,7 @@ Before reset, show a confirmation naming the selected device and explaining that
 
 ## BLE protocol
 
-Advertised local name: `Book Counter`  
+Advertised local name: `Post Box`  
 Primary service UUID: `FFF0`
 
 Use the service UUID and/or local name during scanning. Names can be shortened by an OS, so the service UUID is preferable where supported. All multi-byte integers below are little-endian. Connect, discover services/characteristics, enable needed notifications, and perform encrypted writes only after the operating system has established an encrypted BLE connection/bond.
@@ -47,6 +47,8 @@ Use the service UUID and/or local name during scanning. Names can be shortened b
 | Settings | `FFF4` | Read, write (encrypted) | Two bytes: signed RSSI dBm `i8`, flags `u8` |
 | Sync acknowledgement | `FFF5` | Read, write (encrypted) | 4-byte unsigned acknowledged count |
 | Reset count | `FFF6` | Write (encrypted) | Exact bytes `52 53 54 31` (ASCII `RST1`) |
+| Set device time | `FFF7` | Write (encrypted) | 4-byte unsigned Unix UTC seconds, little-endian; zero is invalid |
+| Last count time | `FFF8` | Read, notify | 4-byte unsigned Unix UTC seconds, little-endian; zero means unknown |
 
 ### Event codes
 
@@ -60,6 +62,8 @@ Use the service UUID and/or local name during scanning. Names can be shortened b
 
 The event packet count is the cumulative count at the time of the event. Use it to refresh the UI, but do not add it to the previous count. Events may be missed or repeated; the cumulative count read is authoritative.
 
+After connecting and establishing encryption, the app should write the phone's current Unix UTC seconds to `FFF7`. Subscribe to `FFF8` to receive/read the UTC timestamp of the most recent count batch. The existing `FFF3` event packet remains 8 bytes and unchanged. The device uses its running low-power millisecond clock to estimate UTC between phone syncs, so it does not need to stay connected to the phone; clock drift can accumulate between syncs. The clock is unknown after a reboot or power loss until the app syncs again; `FFF8` reports zero for count batches recorded before that sync. `FFF8` is only the latest count timestamp, not an event log; the app should persist every count/time observation it receives if it needs history.
+
 ### Settings encoding
 
 - RSSI threshold is a signed two's-complement byte. Firmware accepts `-90` through `-35` dBm.
@@ -71,18 +75,21 @@ The event packet count is the cumulative count at the time of the event. Use it 
 
 Only send reset after the user confirms. Write exactly four bytes `52 53 54 31` to `FFF6`. The firmware sets count and sync acknowledgement to zero, queues persistence, updates the readable values, notifies the count if subscribed, and emits event code `5` if event notifications are enabled. Then read `FFF1` and `FFF5` and verify zero.
 
-Reset keeps proximity settings and BLE bonds. It does not remove app data, server history, or other phones' records. Because reset replaces the device's cumulative baseline, retain a reset timestamp/boundary in app or backend records so a later count of (for example) 3 is not mistaken for a decrease or data loss.
+Reset keeps proximity settings and BLE bonds. It does not remove app data, server history, or other phones' records. Before sending `RST1`, persist a reset boundary with the enrolled app device ID, timestamp, final observed `FFF1` count, and a unique epoch/record ID. A successful reset event reports count zero; it does not include the pre-reset count. Keep the boundary after reset so a later count of (for example) 3 is not mistaken for a decrease or data loss.
+
+The app should distinguish the device count in the current hardware epoch, an optional cycle count since an app-defined baseline, and a lifetime total. Calculate lifetime total as completed hardware epochs' final counts plus the current epoch's device count; do not add software-only cycle snapshots again. Firmware has no arbitrary count-write/import command. A “restore” action can only correct the app's logical display/history; it cannot restore the physical counter and must be labeled accordingly.
 
 ## Connection and sync flow
 
 On connect:
 
 1. Discover service `FFF0` and characteristics.
-2. Enable notifications for `FFF1`, `FFF2`, and `FFF3`.
-3. Read count, battery, settings, and acknowledgement.
-4. Apply the current user's saved settings to `FFF4` if they differ.
-5. Save the count locally. If a backend is configured, upload idempotently using an enrolled app/backend device ID and a stable request key.
-6. Write the exact count to `FFF5` only after the selected local/backend sync step succeeds; read it back to confirm.
+2. Enable notifications for `FFF1`, `FFF2`, `FFF3`, and `FFF8`.
+3. Read count, last count time, battery, settings, and acknowledgement.
+4. Write current Unix UTC seconds to `FFF7` after encryption is established.
+5. Apply the current user's saved settings to `FFF4` if they differ.
+6. Save the count and its timestamp locally. If a backend is configured, upload idempotently using an enrolled app/backend device ID and a stable request key.
+7. Write the exact count to `FFF5` only after the selected local/backend sync step succeeds; read it back to confirm.
 
 On app resume, reconnect or read the count when possible. Never depend only on notifications. On disconnect, preserve the latest local reading and show its timestamp. Retry using bounded backoff and make all sync operations safe to repeat.
 
@@ -127,12 +134,15 @@ Do not treat a BLE MAC address as permanent identity; BLE addresses may be rando
 ## Acceptance checklist
 
 - App discovers and connects to the device on the selected supported Android/iOS versions.
-- It handles pairing and encrypted writes to `FFF4`, `FFF5`, and `FFF6`.
+- It handles pairing and encrypted writes to `FFF4`, `FFF5`, `FFF6`, and `FFF7`.
+- On each connection it syncs device time from the phone and records `FFF8` timestamps with count updates; it treats zero as unknown and does not infer history the device did not retain.
 - Count and battery read correctly; unavailable battery displays distinctly from empty battery.
 - Count changes update from notifications and recover through reads after reconnect.
 - User settings persist in the app and are reapplied on connection.
 - Acknowledgement advances only after the configured sync save/upload succeeds.
 - Reset requires confirmation, writes the exact token, verifies count and acknowledgement are zero, and retains app/server history.
+- The reset history preserves the final pre-reset device count and timestamp; the dashboard can show the previous count and a clearly defined lifetime total.
+- Any reset undo/correction is labeled as app-side state and never represented as a count written back to the device.
 - Duplicate/missed notifications do not corrupt cumulative count or sync state.
 - UI reports offline, disconnected, pending, and permission-limited states accurately.
 - No UI claims passage-by-passage history, person identification, exact distance from RSSI, or guaranteed background alerts.

@@ -15,13 +15,15 @@ BleCounterService bleService;
 bool storageReady = false;
 uint32_t lastBatterySampleMs = 0;
 uint32_t lastPersistenceRetryMs = 0;
+uint32_t ledOffAtMs = 0;
+uint32_t lastCountLogMs = 0;
 }
 
 void setup() {
   Serial.begin(SERIAL_BAUD_RATE);
   delay(100);
   Serial.println();
-  Serial.println(F("IR Book Counter booting"));
+  Serial.println(F("Post Box IR counter booting"));
   Serial.print(F("IR sensor: Arduino pin 20 / P0.20; serial: "));
   Serial.println(SERIAL_BAUD_RATE);
 
@@ -46,27 +48,37 @@ void setup() {
   Serial.println(counterState.count);
 
   bleService.begin(counterState);
-  Serial.println(F("BLE advertising as 'Book Counter' (service FFF0)"));
+  Serial.println(F("BLE advertising as 'Post Box' (service FFF0)"));
   lastBatterySampleMs = millis() - BATTERY_SAMPLE_PERIOD_MS;
 }
 
 void loop() {
   const uint32_t now = millis();
 
-  if (irCounter.update()) {
-    if (counterState.count != UINT32_MAX) ++counterState.count;
-    // Commit before advertising or notifying the new total.
+  const uint16_t countDelta = irCounter.update();
+  if (countDelta > 0) {
+    if (UINT32_MAX - counterState.count < countDelta) counterState.count = UINT32_MAX;
+    else counterState.count += countDelta;
+    // Save a batch once, then publish the newest cumulative total.
     if (storageReady) {
       if (!counterStorage.save(counterState)) {
         Serial.println(F("ERROR: failed to persist count"));
       }
     }
-    Serial.print(F("IR passage counted. Total: "));
-    Serial.println(counterState.count);
-    bleService.onCountChanged();
+    // Keep USB serial output from becoming the rate limiter during fast bursts.
+    if (now - lastCountLogMs >= 1000) {
+      lastCountLogMs = now;
+      Serial.print(F("Count: "));
+      Serial.println(counterState.count);
+    }
+    bleService.onCountChanged(countDelta, now);
     digitalWrite(STATUS_LED_PIN, LOW);
-    delay(30);
+    ledOffAtMs = now + 30;
+  }
+
+  if (ledOffAtMs != 0 && static_cast<int32_t>(now - ledOffAtMs) >= 0) {
     digitalWrite(STATUS_LED_PIN, HIGH);
+    ledOffAtMs = 0;
   }
 
   bleService.loop(now);

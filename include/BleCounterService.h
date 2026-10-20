@@ -9,7 +9,7 @@ class BleCounterService {
  public:
   void begin(CounterState& state);
   void loop(uint32_t now);
-  void onCountChanged();
+  void onCountChanged(uint16_t countDelta = 1, uint32_t nowMs = 0);
   void updateBattery(uint8_t percent, uint32_t now);
 
   bool persistencePending() const { return persistencePending_; }
@@ -25,6 +25,8 @@ class BleCounterService {
                           uint8_t* data, uint16_t length);
   static void onResetWrite(uint16_t connectionHandle, BLECharacteristic* characteristic,
                            uint8_t* data, uint16_t length);
+  static void onTimeSyncWrite(uint16_t connectionHandle, BLECharacteristic* characteristic,
+                              uint8_t* data, uint16_t length);
 
   void refreshAdvertising();
   void sendEvent(uint8_t code);
@@ -39,4 +41,8 @@ class BleCounterService {
   uint8_t batteryPercent_ = 0xFF;
   uint32_t lastProximitySampleMs_ = 0;
   uint32_t lastBatteryWarningMs_ = 0;
+  uint32_t syncedUtcSeconds_ = 0;
+  uint32_t syncAnchorMs_ = 0;
+  uint32_t lastCountUtcSeconds_ = 0;
+  bool clockSynchronized_ = false;
 };
